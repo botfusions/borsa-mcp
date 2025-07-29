@@ -1,0 +1,34 @@
+{
+  "name": "borsa-mcp",
+  "version": "2.0.0",
+  "description": "Türkiye finansal piyasaları MCP server - Market Virtuoso AI",
+  "main": "server.py",
+  "scripts": {
+    "start": "python server.py",
+    "dev": "python server.py"
+  },
+  "keywords": [
+    "mcp",
+    "bist",
+    "turkey",
+    "stock",
+    "market",
+    "financial",
+    "ai",
+    "market-virtuoso"
+  ],
+  "author": "BotFusions",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/botfusions/borsa-mcp.git"
+  },
+  "mcp": {
+    "transport": "stdio",
+    "capabilities": {
+      "tools": true,
+      "resources": false,
+      "prompts": false
+    }
+  }
+}
