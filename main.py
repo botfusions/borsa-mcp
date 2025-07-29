@@ -486,3 +486,4 @@ if __name__ == "__main__":
     print("📨 Messages: /mcp/messages")
     print("🛠️ Tools: 4")
     uvicorn.run(app, host="0.0.0.0", port=9000, log_level="info")
+# Deploy trigger Tue Jul 29 23:04:11 UTC 2025
