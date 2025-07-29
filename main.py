@@ -148,7 +148,7 @@ async def mcp_sse_endpoint(request: Request):
                 
         except asyncio.CancelledError:
             logger.info("🔌 MCP SSE client disconnected")
-            break
+            return
         except Exception as e:
             logger.error(f"❌ MCP SSE error: {e}")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
