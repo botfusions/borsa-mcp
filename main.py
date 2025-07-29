@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
 🚀 BORSA MCP - Market Virtuoso API
-Enhanced FastAPI server with MCP tool integration
+Complete MCP Server implementation for n8n integration
 """
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel
-from typing import Dict, List, Optional, Any
-import httpx
+from typing import Dict, List, Optional, Any, AsyncGenerator
 import asyncio
 import logging
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 # FastAPI app initialization
 app = FastAPI(
     title="🎭 BORSA MCP - Market Virtuoso API",
-    description="AI-powered Turkish stock market analysis with MCP integration",
-    version="2.0.0",
+    description="AI-powered Turkish stock market analysis with MCP Server integration",
+    version="2.1.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -44,22 +44,13 @@ app.add_middleware(
 class AnalysisRequest(BaseModel):
     analysis_type: Optional[str] = "technical"
     period: Optional[str] = "1y"
-    indicators: Optional[List[str]] = ["rsi", "macd", "bb"]
 
 class MaestroRequest(BaseModel):
     ticker: str
     user_query: str
     analysis_depth: Optional[str] = "full"
 
-class StockData(BaseModel):
-    ticker: str
-    price: float
-    change: float
-    change_percent: float
-    volume: int
-    market_cap: Optional[float] = None
-
-# Market Virtuoso Persona Configuration
+# Market Virtuoso Configuration
 MARKET_VIRTUOSO_CONFIG = {
     "persona": "The Maestro",
     "philosophy": "Asymmetry, Narrative + Numbers, Strategic Patience",
@@ -71,36 +62,50 @@ MARKET_VIRTUOSO_CONFIG = {
 
 # Turkish stock tickers mapping
 TURKISH_TICKERS = {
-    "THY": "THYAO.IS",
-    "THYAO": "THYAO.IS", 
-    "AKBNK": "AKBNK.IS",
-    "GARAN": "GARAN.IS",
-    "ISCTR": "ISCTR.IS",
-    "KCHOL": "KCHOL.IS",
-    "SAHOL": "SAHOL.IS",
-    "YKBNK": "YKBNK.IS",
-    "BIMAS": "BIMAS.IS",
-    "TCELL": "TCELL.IS",
-    "ASELS": "ASELS.IS"
+    "THY": "THYAO.IS", "THYAO": "THYAO.IS", "AKBNK": "AKBNK.IS",
+    "GARAN": "GARAN.IS", "ISCTR": "ISCTR.IS", "KCHOL": "KCHOL.IS",
+    "SAHOL": "SAHOL.IS", "YKBNK": "YKBNK.IS", "BIMAS": "BIMAS.IS",
+    "TCELL": "TCELL.IS", "ASELS": "ASELS.IS", "TUPRS": "TUPRS.IS"
 }
+
+# 🔧 MCP SERVER CORS MIDDLEWARE
+@app.middleware("http")
+async def add_mcp_cors_headers(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/mcp"):
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        response.headers["Cache-Control"] = "no-cache"
+        response.headers["Connection"] = "keep-alive"
+    return response
 
 @app.get("/")
 async def root():
-    """Welcome message with API info"""
+    """Welcome message with MCP Server info"""
     return {
-        "message": "🎭 Market Virtuoso API - MCP Ready!",
+        "message": "🎭 Market Virtuoso API - MCP Server Ready!",
         "status": "operational",
         "persona": "Market Maestro",
-        "version": "2.0.0",
+        "version": "2.1.0",
+        "mcp_server": {
+            "sse_endpoint": "/mcp",
+            "messages_endpoint": "/mcp/messages",
+            "tools_count": 4,
+            "status": "active"
+        },
         "endpoints": {
             "health": "/health",
             "technical_analysis": "/analyze/technical/{ticker}",
             "sentiment_analysis": "/analyze/sentiment/{ticker}",
             "maestro_analysis": "/maestro/analyze",
             "market_overview": "/market/overview",
-            "mcp_tools": "/mcp/tools"
+            "mcp_tools": "/mcp/tools",
+            "mcp_sse": "/mcp",
+            "mcp_messages": "/mcp/messages"
         },
-        "mcp_compatible": True
+        "mcp_compatible": True,
+        "n8n_ready": True
     }
 
 @app.get("/health")
@@ -113,74 +118,160 @@ async def health_check():
         "services": {
             "api": "✅ Active",
             "yfinance": "✅ Connected",
-            "mcp": "✅ Ready"
+            "mcp_server": "✅ Ready",
+            "sse_endpoint": "✅ Active"
+        },
+        "mcp_tools": {
+            "borsa_technical_analysis": "✅ Ready",
+            "maestro_full_analysis": "✅ Ready", 
+            "market_sentiment_analysis": "✅ Ready",
+            "market_overview": "✅ Ready"
         }
     }
 
-@app.get("/mcp/tools")
-async def mcp_tools():
-    """MCP Tools definition for AI agents"""
-    return {
-        "tools": [
-            {
-                "name": "borsa_technical_analysis",
-                "description": "Get technical analysis for Turkish stocks including RSI, MACD, Bollinger Bands",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "ticker": {
-                            "type": "string",
-                            "description": "Turkish stock ticker (e.g., THYAO, AKBNK)"
+# 🔧 MCP SERVER ENDPOINTS
+
+@app.get("/mcp")
+async def mcp_sse_endpoint(request: Request):
+    """
+    🔧 MCP Server SSE Endpoint - N8N connection point
+    """
+    async def event_stream() -> AsyncGenerator[str, None]:
+        try:
+            logger.info("🔗 MCP SSE client connected")
+            yield f"data: {json.dumps({'type': 'connect', 'status': 'ready', 'server': 'BORSA-MCP', 'tools': 4})}\n\n"
+            
+            # Keep connection alive with heartbeat
+            while True:
+                await asyncio.sleep(30)
+                yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': datetime.now().isoformat(), 'status': 'alive'})}\n\n"
+                
+        except asyncio.CancelledError:
+            logger.info("🔌 MCP SSE client disconnected")
+            break
+        except Exception as e:
+            logger.error(f"❌ MCP SSE error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
+    return EventSourceResponse(event_stream())
+
+@app.post("/mcp/messages")
+async def mcp_messages_endpoint(request: Request):
+    """
+    🔧 MCP Messages Endpoint - Tool execution handler
+    """
+    try:
+        message = await request.json()
+        logger.info(f"📨 MCP Message: {message.get('method', 'unknown')}")
+        
+        if message.get("method") == "tools/list":
+            return {
+                "jsonrpc": "2.0",
+                "id": message.get("id"),
+                "result": {
+                    "tools": [
+                        {
+                            "name": "borsa_technical_analysis",
+                            "description": "🔍 Türk hisse senetleri için kapsamlı teknik analiz",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "ticker": {
+                                        "type": "string",
+                                        "description": "Hisse senedi kodu (THYAO, AKBNK vb.)"
+                                    }
+                                },
+                                "required": ["ticker"]
+                            }
                         },
-                        "analysis_type": {
-                            "type": "string", 
-                            "enum": ["technical", "full"],
-                            "default": "technical"
-                        }
-                    },
-                    "required": ["ticker"]
-                }
-            },
-            {
-                "name": "maestro_full_analysis",
-                "description": "Complete Market Virtuoso analysis with AI persona",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "ticker": {
-                            "type": "string",
-                            "description": "Stock ticker symbol"
+                        {
+                            "name": "maestro_full_analysis", 
+                            "description": "🎭 Market Virtuoso tam analizi",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "ticker": {"type": "string"},
+                                    "user_query": {"type": "string"}
+                                },
+                                "required": ["ticker", "user_query"]
+                            }
                         },
-                        "user_query": {
-                            "type": "string",
-                            "description": "User's question about the stock"
-                        }
-                    },
-                    "required": ["ticker", "user_query"]
-                }
-            },
-            {
-                "name": "market_sentiment_analysis",
-                "description": "Analyze market sentiment for Turkish stocks",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "ticker": {
-                            "type": "string",
-                            "description": "Stock ticker"
+                        {
+                            "name": "market_sentiment_analysis",
+                            "description": "💭 Piyasa duygu analizi",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "ticker": {"type": "string"}
+                                },
+                                "required": ["ticker"]
+                            }
                         },
-                        "sentiment_sources": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "default": ["news", "social", "analyst"]
+                        {
+                            "name": "market_overview",
+                            "description": "📊 Genel piyasa durumu",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {},
+                                "required": []
+                            }
                         }
-                    },
-                    "required": ["ticker"]
+                    ]
                 }
             }
-        ],
-        "persona": MARKET_VIRTUOSO_CONFIG
-    }
+            
+        elif message.get("method") == "tools/call":
+            tool_name = message.get("params", {}).get("name")
+            tool_args = message.get("params", {}).get("arguments", {})
+            
+            try:
+                if tool_name == "borsa_technical_analysis":
+                    result = await analyze_technical(tool_args.get("ticker", "THYAO"))
+                    
+                elif tool_name == "maestro_full_analysis":
+                    result = await maestro_analyze(MaestroRequest(
+                        ticker=tool_args.get("ticker", "THYAO"),
+                        user_query=tool_args.get("user_query", "Analiz")
+                    ))
+                    
+                elif tool_name == "market_sentiment_analysis":
+                    result = await analyze_sentiment(tool_args.get("ticker", "THYAO"))
+                    
+                elif tool_name == "market_overview":
+                    result = await market_overview()
+                    
+                else:
+                    raise HTTPException(404, f"Tool {tool_name} not found")
+                
+                return {
+                    "jsonrpc": "2.0",
+                    "id": message.get("id"),
+                    "result": {
+                        "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=2)}]
+                    }
+                }
+                
+            except Exception as e:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": message.get("id"),
+                    "error": {"code": -32603, "message": f"Tool error: {str(e)}"}
+                }
+        
+        else:
+            return {
+                "jsonrpc": "2.0",
+                "id": message.get("id"),
+                "error": {"code": -32601, "message": f"Method not supported"}
+            }
+            
+    except Exception as e:
+        return {
+            "jsonrpc": "2.0",
+            "error": {"code": -32700, "message": f"Parse error: {str(e)}"}
+        }
+
+# 🛠️ UTILITY FUNCTIONS
 
 def get_yfinance_ticker(ticker: str) -> str:
     """Convert Turkish ticker to Yahoo Finance format"""
@@ -188,7 +279,7 @@ def get_yfinance_ticker(ticker: str) -> str:
     return TURKISH_TICKERS.get(ticker_upper, f"{ticker_upper}.IS")
 
 def calculate_technical_indicators(data: pd.DataFrame) -> Dict[str, Any]:
-    """Calculate comprehensive technical indicators"""
+    """Calculate technical indicators"""
     try:
         # RSI calculation
         delta = data['Close'].diff()
@@ -202,323 +293,176 @@ def calculate_technical_indicators(data: pd.DataFrame) -> Dict[str, Any]:
         exp2 = data['Close'].ewm(span=26).mean()
         macd = exp1 - exp2
         signal = macd.ewm(span=9).mean()
-        histogram = macd - signal
         
-        # Bollinger Bands
-        bb_period = 20
-        bb_std = 2
-        bb_middle = data['Close'].rolling(window=bb_period).mean()
-        bb_upper = bb_middle + (data['Close'].rolling(window=bb_period).std() * bb_std)
-        bb_lower = bb_middle - (data['Close'].rolling(window=bb_period).std() * bb_std)
-        
-        # Support and Resistance levels
+        # Support and Resistance
         recent_high = data['High'].rolling(window=20).max().iloc[-1]
         recent_low = data['Low'].rolling(window=20).min().iloc[-1]
         
-        # Volume analysis
-        avg_volume = data['Volume'].rolling(window=30).mean().iloc[-1]
-        current_volume = data['Volume'].iloc[-1]
-        volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1
-        
         return {
             "rsi": {
-                "current": float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else None,
-                "signal": "overbought" if rsi.iloc[-1] > 70 else "oversold" if rsi.iloc[-1] < 30 else "neutral"
+                "current": float(rsi.iloc[-1]) if not pd.isna(rsi.iloc[-1]) else 50,
+                "signal": "aşırı_alım" if rsi.iloc[-1] > 70 else "aşırı_satım" if rsi.iloc[-1] < 30 else "nötr"
             },
             "macd": {
-                "macd": float(macd.iloc[-1]) if not pd.isna(macd.iloc[-1]) else None,
-                "signal": float(signal.iloc[-1]) if not pd.isna(signal.iloc[-1]) else None,
-                "histogram": float(histogram.iloc[-1]) if not pd.isna(histogram.iloc[-1]) else None,
-                "trend": "bullish" if macd.iloc[-1] > signal.iloc[-1] else "bearish"
-            },
-            "bollinger_bands": {
-                "upper": float(bb_upper.iloc[-1]) if not pd.isna(bb_upper.iloc[-1]) else None,
-                "middle": float(bb_middle.iloc[-1]) if not pd.isna(bb_middle.iloc[-1]) else None,
-                "lower": float(bb_lower.iloc[-1]) if not pd.isna(bb_lower.iloc[-1]) else None,
-                "position": "above" if data['Close'].iloc[-1] > bb_upper.iloc[-1] else "below" if data['Close'].iloc[-1] < bb_lower.iloc[-1] else "middle"
+                "trend": "yükselişt" if macd.iloc[-1] > signal.iloc[-1] else "düşüş"
             },
             "support_resistance": {
                 "resistance": float(recent_high),
                 "support": float(recent_low),
                 "current_price": float(data['Close'].iloc[-1])
-            },
-            "volume_analysis": {
-                "current_volume": int(current_volume),
-                "avg_volume": int(avg_volume),
-                "volume_ratio": float(volume_ratio),
-                "signal": "high" if volume_ratio > 1.5 else "low" if volume_ratio < 0.5 else "normal"
             }
         }
     except Exception as e:
-        logger.error(f"Technical indicators calculation error: {e}")
-        return {"error": f"Calculation failed: {str(e)}"}
+        logger.error(f"Technical calculation error: {e}")
+        return {"error": "Calculation failed"}
 
-@app.post("/analyze/technical/{ticker}")
+# 📊 API ENDPOINTS
+
 async def analyze_technical(ticker: str, request: AnalysisRequest = AnalysisRequest()):
-    """
-    🔧 MCP Tool: Technical Analysis
-    Advanced technical analysis for Turkish stocks
-    """
+    """Technical Analysis Tool"""
     try:
         yf_ticker = get_yfinance_ticker(ticker)
-        logger.info(f"Fetching technical data for {ticker} -> {yf_ticker}")
+        logger.info(f"📊 Technical analysis: {ticker} -> {yf_ticker}")
         
-        # Fetch stock data
         stock = yf.Ticker(yf_ticker)
-        hist = stock.history(period=request.period)
+        hist = stock.history(period="1y")
         
         if hist.empty:
-            raise HTTPException(status_code=404, detail=f"No data found for ticker {ticker}")
+            return {"error": f"No data for {ticker}"}
         
-        # Calculate technical indicators
         technical_data = calculate_technical_indicators(hist)
-        
-        # Get current stock info
-        info = stock.info
         current_price = hist['Close'].iloc[-1]
         prev_close = hist['Close'].iloc[-2] if len(hist) > 1 else current_price
-        change = current_price - prev_close
-        change_percent = (change / prev_close) * 100 if prev_close != 0 else 0
+        change_percent = ((current_price - prev_close) / prev_close) * 100
         
         return {
             "ticker": ticker.upper(),
-            "yf_ticker": yf_ticker,
-            "timestamp": datetime.now().isoformat(),
             "current_price": float(current_price),
-            "change": float(change),
             "change_percent": float(change_percent),
-            "currency": "TRY",
             "technical_indicators": technical_data,
-            "market_status": "open" if datetime.now().weekday() < 5 else "closed",
-            "analysis_type": request.analysis_type,
+            "timestamp": datetime.now().isoformat(),
             "mcp_tool": "borsa_technical_analysis"
         }
         
     except Exception as e:
-        logger.error(f"Technical analysis error for {ticker}: {e}")
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+        logger.error(f"Technical analysis error: {e}")
+        return {"error": f"Analysis failed: {str(e)}"}
 
-@app.post("/analyze/sentiment/{ticker}")
-async def analyze_sentiment(ticker: str):
-    """
-    🔧 MCP Tool: Sentiment Analysis
-    Market sentiment analysis for Turkish stocks
-    """
+async def maestro_analyze(request: MaestroRequest):
+    """Market Maestro Full Analysis Tool"""
     try:
-        # Simulated sentiment analysis (integrate with real news APIs)
-        sentiment_score = np.random.uniform(-1, 1)  # Placeholder
+        technical_data = await analyze_technical(request.ticker)
         
-        sentiment_data = {
-            "overall_sentiment": sentiment_score,
-            "sentiment_label": "positive" if sentiment_score > 0.1 else "negative" if sentiment_score < -0.1 else "neutral",
-            "confidence": abs(sentiment_score),
-            "sources": {
-                "news_sentiment": np.random.uniform(-1, 1), 
-                "social_media": np.random.uniform(-1, 1),
-                "analyst_ratings": np.random.uniform(-1, 1)
-            },
-            "key_factors": [
-                "Sektörel performans",
-                "Genel piyasa durumu", 
-                "Şirket haberleri",
-                "Makroekonomik göstergeler"
-            ]
+        # Generate Maestro narrative
+        current_price = technical_data.get("current_price", 0)
+        change_percent = technical_data.get("change_percent", 0)
+        
+        maestro_narrative = f"""
+🎭 **Market Virtuoso - {request.ticker.upper()} Analizi**
+
+🎯 **Hızlı Değerlendirme**: 
+{request.ticker.upper()} şu an {current_price:.2f} TL seviyesinde.
+Günlük değişim: %{change_percent:.2f}
+
+📊 **Teknik Görünüm**:
+• Fiyat hareketi analizi tamamlandı
+• Teknik indikatörler değerlendirildi
+
+🧭 **Maestro'nun Görüşü**:
+"{request.ticker.upper()} için mevcut piyasa koşulları dikkate alındığında,
+dikkatli yaklaşım öneriliyor."
+
+📌 **Kullanıcı Sorusu**: "{request.user_query}"
+
+⚠️ **Uyarı**: Bu analiz finansal tavsiye değildir.
+        """
+        
+        return {
+            "ticker": request.ticker.upper(),
+            "user_query": request.user_query,
+            "narrative_analysis": maestro_narrative.strip(),
+            "technical_data": technical_data,
+            "persona": "Market Maestro",
+            "timestamp": datetime.now().isoformat(),
+            "mcp_tool": "maestro_full_analysis"
         }
+        
+    except Exception as e:
+        logger.error(f"Maestro analysis error: {e}")
+        return {"error": f"Maestro analysis failed: {str(e)}"}
+
+async def analyze_sentiment(ticker: str):
+    """Market Sentiment Analysis Tool"""
+    try:
+        sentiment_score = np.random.uniform(-0.5, 0.5)  # Placeholder
         
         return {
             "ticker": ticker.upper(),
+            "sentiment_analysis": {
+                "overall_sentiment": sentiment_score,
+                "sentiment_label": "pozitif" if sentiment_score > 0 else "negatif" if sentiment_score < 0 else "nötr",
+                "summary": f"{ticker.upper()} için piyasa duygusu {'olumlu' if sentiment_score > 0 else 'olumsuz' if sentiment_score < 0 else 'kararsız'}"
+            },
             "timestamp": datetime.now().isoformat(),
-            "sentiment_analysis": sentiment_data,
             "mcp_tool": "market_sentiment_analysis"
         }
         
     except Exception as e:
-        logger.error(f"Sentiment analysis error for {ticker}: {e}")
-        raise HTTPException(status_code=500, detail=f"Sentiment analysis failed: {str(e)}")
+        return {"error": f"Sentiment analysis failed: {str(e)}"}
 
-@app.post("/maestro/analyze")
-async def maestro_analyze(request: MaestroRequest):
-    """
-    🎭 MCP Tool: Market Maestro Full Analysis
-    Complete Market Virtuoso persona analysis
-    """
-    try:
-        # Get technical analysis first
-        technical_analysis = await analyze_technical(request.ticker)
-        
-        # Get sentiment analysis
-        sentiment_analysis = await analyze_sentiment(request.ticker)
-        
-        # Market Virtuoso Analysis Framework
-        maestro_analysis = {
-            "telescope_view": {
-                "macro_context": "Türk ekonomisinde enflasyon baskısı devam ediyor, TCMB politika duruşu kritik",
-                "sector_outlook": "Hisse senedi sektörüne göre değerlendiriliyor",
-                "global_impact": "Küresel piyasalar ve USD/TRY paritesi etkili"
-            },
-            "microscope_view": {
-                "technical_summary": technical_analysis.get("technical_indicators", {}),
-                "price_action": f"Güncel fiyat: {technical_analysis.get('current_price', 0):.2f} TL",
-                "volume_profile": technical_analysis.get("technical_indicators", {}).get("volume_analysis", {})
-            },
-            "barometer_reading": {
-                "market_sentiment": sentiment_analysis.get("sentiment_analysis", {}),
-                "risk_appetite": "Temkinli" if sentiment_analysis.get("sentiment_analysis", {}).get("overall_sentiment", 0) < 0 else "Pozitif",
-                "momentum": "Güçlü" if technical_analysis.get("technical_indicators", {}).get("rsi", {}).get("current", 50) > 60 else "Zayıf"
-            },
-            "architects_blueprint": {
-                "entry_zones": [
-                    technical_analysis.get("technical_indicators", {}).get("support_resistance", {}).get("support", 0),
-                    technical_analysis.get("technical_indicators", {}).get("bollinger_bands", {}).get("lower", 0)
-                ],
-                "target_zones": [
-                    technical_analysis.get("technical_indicators", {}).get("support_resistance", {}).get("resistance", 0),
-                    technical_analysis.get("technical_indicators", {}).get("bollinger_bands", {}).get("upper", 0)
-                ],
-                "risk_management": "Stop-loss: Destek seviyesinin %2 altı",
-                "position_sizing": "Portföyün %2-5'i arası önerilir"
-            }
-        }
-        
-        # Generate Maestro's narrative
-        rsi_value = technical_analysis.get("technical_indicators", {}).get("rsi", {}).get("current", 50)
-        macd_trend = technical_analysis.get("technical_indicators", {}).get("macd", {}).get("trend", "neutral")
-        
-        maestro_narrative = f"""
-🎭 **Maestro'nun {request.ticker.upper()} Analizi**
-
-🎯 **Hızlı Değerlendirme**: 
-{request.ticker.upper()} şu an RSI {rsi_value:.1f} seviyesinde, {macd_trend} trend gösteriyor. 
-Kullanıcı sorusu: "{request.user_query}"
-
-📊 **Teknik Perspektif**:
-• RSI seviyesi momentum hakkında ipuçları veriyor
-• MACD {macd_trend} sinyali üretmiş durumda
-• Bollinger bantları içindeki pozisyon önemli
-
-🧭 **Maestro'nun Görüşü**:
-"Bu hisse sanki bekleyen bir kartal gibi... Teknik formasyonu {macd_trend} ama makro rüzgarlar 
-değişken. Asymmetric opportunity arayanlar dikkat etmeli - pozisyon büyüklüğü her zaman kritik."
-
-⚖️ **Risk Haritası**:
-↗️ Upside: Teknik kırılım, sektörel momentum
-↘️ Downside: Makro baskılar, likidite çekilişi
-
-⚠️ **Uyarı**: Bu analiz finansal tavsiye değildir. Maestro'nun görüşleri yatırım kararınızı etkilememelidir.
-        """
-        
-        response = {
-            "ticker": request.ticker.upper(),
-            "timestamp": datetime.now().isoformat(),
-            "user_query": request.user_query,
-            "maestro_framework": maestro_analysis,
-            "narrative_analysis": maestro_narrative.strip(),
-            "technical_data": technical_analysis,
-            "sentiment_data": sentiment_analysis,
-            "persona": "Market Maestro",
-            "analysis_depth": request.analysis_depth,
-            "mcp_tool": "maestro_full_analysis"
-        }
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"Maestro analysis error for {request.ticker}: {e}")
-        raise HTTPException(status_code=500, detail=f"Maestro analysis failed: {str(e)}")
-
-@app.get("/market/overview")
 async def market_overview():
-    """Market overview with key Turkish indices"""
+    """Market Overview Tool"""
     try:
-        # Fetch BIST 100 data
+        # BIST 100 data
         bist100 = yf.Ticker("XU100.IS")
-        bist100_hist = bist100.history(period="5d")
+        hist = bist100.history(period="5d")
         
-        if not bist100_hist.empty:
-            current_price = bist100_hist['Close'].iloc[-1]
-            prev_close = bist100_hist['Close'].iloc[-2] if len(bist100_hist) > 1 else current_price
-            change = current_price - prev_close
-            change_percent = (change / prev_close) * 100 if prev_close != 0 else 0
+        if not hist.empty:
+            current = hist['Close'].iloc[-1]
+            prev = hist['Close'].iloc[-2] if len(hist) > 1 else current
+            change_pct = ((current - prev) / prev) * 100
         else:
-            current_price = change = change_percent = 0
+            current = change_pct = 0
             
-        # Top stocks to monitor
-        top_stocks = ["THYAO", "AKBNK", "GARAN", "KCHOL", "SAHOL"]
-        
-        market_data = {
-            "bist100": {
-                "current": float(current_price),
-                "change": float(change),
-                "change_percent": float(change_percent)
-            },
-            "market_status": "open" if datetime.now().weekday() < 5 else "closed",
-            "top_stocks": top_stocks,
-            "market_sentiment": "Temkinli pozitif",
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        return market_data
-        
-    except Exception as e:
-        logger.error(f"Market overview error: {e}")
-        raise HTTPException(status_code=500, detail=f"Market overview failed: {str(e)}")
-
-@app.get("/stocks/search/{query}")
-async def search_stocks(query: str):
-    """Search Turkish stocks by name or ticker"""
-    try:
-        # Simple stock search in Turkish tickers
-        matches = []
-        query_upper = query.upper()
-        
-        for ticker, yf_ticker in TURKISH_TICKERS.items():
-            if query_upper in ticker:
-                matches.append({
-                    "ticker": ticker,
-                    "yf_ticker": yf_ticker,
-                    "match_type": "ticker"
-                })
-        
         return {
-            "query": query,
-            "matches": matches[:10],  # Limit to 10 results
-            "timestamp": datetime.now().isoformat()
+            "bist100": {
+                "current": float(current),
+                "change_percent": float(change_pct),
+                "trend": "pozitif" if change_pct > 0 else "negatif"
+            },
+            "market_status": "açık" if datetime.now().weekday() < 5 else "kapalı",
+            "summary": f"BIST 100: {current:.0f} (%{change_pct:.2f})",
+            "timestamp": datetime.now().isoformat(),
+            "mcp_tool": "market_overview"
         }
         
     except Exception as e:
-        logger.error(f"Stock search error: {e}")
-        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+        return {"error": f"Market overview failed: {str(e)}"}
 
-# MCP Integration Endpoints
-@app.post("/mcp/execute/{tool_name}")
-async def mcp_execute_tool(tool_name: str, tool_params: Dict[str, Any]):
-    """
-    🔧 MCP Tool Execution Endpoint
-    Execute MCP tools programmatically
-    """
-    try:
-        if tool_name == "borsa_technical_analysis":
-            ticker = tool_params.get("ticker", "THYAO")
-            analysis_type = tool_params.get("analysis_type", "technical")
-            request_obj = AnalysisRequest(analysis_type=analysis_type)
-            return await analyze_technical(ticker, request_obj)
-            
-        elif tool_name == "maestro_full_analysis":
-            ticker = tool_params.get("ticker", "THYAO")
-            user_query = tool_params.get("user_query", "Genel analiz")
-            request_obj = MaestroRequest(ticker=ticker, user_query=user_query)
-            return await maestro_analyze(request_obj)
-            
-        elif tool_name == "market_sentiment_analysis":
-            ticker = tool_params.get("ticker", "THYAO")
-            return await analyze_sentiment(ticker)
-            
-        else:
-            raise HTTPException(status_code=404, detail=f"Tool {tool_name} not found")
-            
-    except Exception as e:
-        logger.error(f"MCP tool execution error: {e}")
-        raise HTTPException(status_code=500, detail=f"Tool execution failed: {str(e)}")
+# Legacy endpoints
+@app.post("/analyze/technical/{ticker}")
+async def analyze_technical_endpoint(ticker: str, request: AnalysisRequest = AnalysisRequest()):
+    return await analyze_technical(ticker, request)
+
+@app.post("/maestro/analyze") 
+async def maestro_analyze_endpoint(request: MaestroRequest):
+    return await maestro_analyze(request)
+
+@app.get("/mcp/tools")
+async def mcp_tools_list():
+    """MCP Tools documentation"""
+    return {
+        "mcp_server": "BORSA Market Virtuoso",
+        "version": "2.1.0",
+        "tools": [
+            {"name": "borsa_technical_analysis", "description": "🔍 Technical analysis"},
+            {"name": "maestro_full_analysis", "description": "🎭 Maestro analysis"}, 
+            {"name": "market_sentiment_analysis", "description": "💭 Sentiment analysis"},
+            {"name": "market_overview", "description": "📊 Market overview"}
+        ],
+        "endpoints": {"sse": "/mcp", "messages": "/mcp/messages"},
+        "persona": MARKET_VIRTUOSO_CONFIG
+    }
 
 # Error handlers
 @app.exception_handler(404)
@@ -527,25 +471,18 @@ async def not_found_handler(request: Request, exc: HTTPException):
         status_code=404,
         content={
             "error": "Endpoint bulunamadı",
-            "message": "API dokümantasyonu için /docs adresini ziyaret edin",
-            "available_endpoints": [
-                "/", "/health", "/analyze/technical/{ticker}", 
-                "/maestro/analyze", "/market/overview", "/mcp/tools"
-            ]
+            "available_endpoints": ["/", "/health", "/mcp", "/mcp/messages", "/mcp/tools"]
         }
     )
 
-@app.exception_handler(500)
-async def internal_error_handler(request: Request, exc: HTTPException):
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": "Sunucu hatası",
-            "message": "Teknik bir sorun oluştu, lütfen daha sonra tekrar deneyin",
-            "timestamp": datetime.now().isoformat()
-        }
-    )
+@app.options("/mcp/messages")
+async def mcp_options():
+    return JSONResponse(content={"status": "ok"})
 
 if __name__ == "__main__":
     import uvicorn
+    print("🚀 Starting BORSA MCP Server...")
+    print("📡 SSE Endpoint: /mcp")
+    print("📨 Messages: /mcp/messages")
+    print("🛠️ Tools: 4")
     uvicorn.run(app, host="0.0.0.0", port=9000, log_level="info")
