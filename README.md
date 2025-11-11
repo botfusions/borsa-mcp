@@ -1,8 +1,18 @@
 # Borsa MCP: Borsa İstanbul (BIST), TEFAS Fonları ve Türk/Global Kripto Piyasaları için MCP Sunucusu
 
+[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/saidsurucu/borsa-mcp)
+[![Security](https://img.shields.io/badge/security-8.5%2F10-brightgreen.svg)](./SECURITY.md)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 [![Star History Chart](https://api.star-history.com/svg?repos=saidsurucu/borsa-mcp&type=Date)](https://www.star-history.com/#saidsurucu/borsa-mcp&Date)
 
 Bu proje, Borsa İstanbul (BIST) verilerine, Türk yatırım fonları verilerine, global kripto para verilerine ve döviz/emtia verilerine erişimi kolaylaştıran bir [FastMCP](https://gofastmcp.com/) sunucusu oluşturur. Bu sayede, KAP (Kamuyu Aydınlatma Platformu), TEFAS (Türkiye Elektronik Fon Alım Satım Platformu), BtcTurk, Coinbase, Doviz.com, Mynet Finans ve Yahoo Finance'dan hisse senedi bilgileri, fon verileri, hem Türk hem de global kripto para piyasa verileri, döviz kurları ve emtia fiyatları, finansal veriler, teknik analiz ve sektör karşılaştırmaları, Model Context Protocol (MCP) destekleyen LLM (Büyük Dil Modeli) uygulamaları (örneğin Claude Desktop veya [5ire](https://5ire.app)) ve diğer istemciler tarafından araç (tool) olarak kullanılabilir hale gelir.
+
+## 🆕 Yenilikler (v2.1.0)
+
+- 🔒 **Güvenlik İyileştirmeleri**: API Key authentication, rate limiting, CORS kısıtlaması
+- 🚀 **Production-Ready**: Railway, Render, VPS deployment desteği
+- 🌐 **FastAPI Endpoint**: n8n ve webhook entegrasyonları için HTTP/SSE desteği
+- 📚 **Kapsamlı Dokümantasyon**: Deployment ve güvenlik kılavuzları
 
 ![ornek](./ornek.jpeg)
 
@@ -49,10 +59,12 @@ Bu proje, Borsa İstanbul (BIST) verilerine, Türk yatırım fonları verilerine
 ## 📑 **İçindekiler**
 
 <details>
-<summary><b>🚀 Kurulum</b></summary>
+<summary><b>🚀 Kurulum & Deployment</b></summary>
 
 - [Claude Desktop Dışı Kullanım (5ire vb.)](#-claude-haricindeki-modellerle-kullanmak-için-çok-kolay-kurulum-örnek-5ire-için)
 - [Claude Desktop Manuel Kurulumu](#️-claude-desktop-manuel-kurulumu)
+- [🌐 Production Deployment](#-production-deployment)
+- [🔒 Güvenlik Konfigürasyonu](#-güvenlik-konfigürasyonu)
 
 </details>
 
@@ -148,6 +160,189 @@ Bu bölüm, Borsa MCP aracını 5ire gibi Claude Desktop dışındaki MCP istemc
     }
     ```
 4.  Claude Desktop'ı kapatıp yeniden başlatın.
+
+</details>
+
+---
+
+## 🌐 Production Deployment
+
+Borsa MCP'yi production ortamında çalıştırmak için birden fazla seçeneğiniz var:
+
+<details>
+<summary><b>☁️ Railway (EN KOLAY - 15 dakika)</b></summary>
+
+1. https://railway.app/ → Login with GitHub
+2. **New Project** → **Deploy from GitHub repo**
+3. Repository: `botfusions/borsa-mcp`
+4. Branch: `claude/security-improvements-...`
+5. **Environment Variables** ekle:
+   ```
+   BORSA_API_KEY=your_secure_key
+   ALLOWED_ORIGINS=https://yourdomain.com
+   RATE_LIMIT=30/minute
+   ENABLE_DOCS=false
+   ```
+6. Deploy!
+
+**Detaylı Kılavuz:** [QUICK_START.md](./QUICK_START.md)
+
+</details>
+
+<details>
+<summary><b>🎨 Render (Ücretsiz Tier)</b></summary>
+
+1. https://render.com/ → Sign up
+2. **New** → **Web Service**
+3. Connect GitHub repo
+4. Start Command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+5. Environment Variables ekle
+6. Deploy!
+
+**750 saat/ay ücretsiz tier mevcut.**
+
+**Detaylı Kılavuz:** [QUICK_START.md](./QUICK_START.md)
+
+</details>
+
+<details>
+<summary><b>🖥️ VPS (DigitalOcean, Hetzner, AWS)</b></summary>
+
+**Otomatik Kurulum (60 dakika):**
+```bash
+ssh root@YOUR_VPS_IP
+curl -sSL https://raw.githubusercontent.com/botfusions/borsa-mcp/main/deploy-vps.sh | bash
+```
+
+**Manuel Kurulum:**
+- Nginx + SSL yapılandırması
+- Systemd service
+- Firewall kuralları
+- Monitoring setup
+
+**Detaylı Kılavuz:** [DEPLOYMENT_SECURITY_REPORT.md](./DEPLOYMENT_SECURITY_REPORT.md)
+
+</details>
+
+<details>
+<summary><b>🐳 Docker</b></summary>
+
+```bash
+# Docker Compose ile
+docker-compose up -d
+
+# Tek container
+docker build -t borsa-mcp .
+docker run -d -p 9000:9000 \
+  -e BORSA_API_KEY=your_key \
+  -e ALLOWED_ORIGINS=* \
+  borsa-mcp
+```
+
+**docker-compose.yml** dosyası repoda mevcut.
+
+</details>
+
+### 📚 Deployment Dokümantasyonu
+
+- **[QUICK_START.md](./QUICK_START.md)** - Hızlı başlangıç (3 farklı yöntem)
+- **[DEPLOYMENT_SECURITY_REPORT.md](./DEPLOYMENT_SECURITY_REPORT.md)** - Kapsamlı deployment kılavuzu (1483 satır)
+- **[SECURITY.md](./SECURITY.md)** - Güvenlik konfigürasyonu ve best practices
+
+---
+
+## 🔒 Güvenlik Konfigürasyonu
+
+Borsa MCP v2.1.0 production-ready güvenlik özellikleri içerir:
+
+### Güvenlik Katmanları
+
+✅ **API Key Authentication**
+```bash
+# Environment variable ile
+export BORSA_API_KEY="your_secure_key_here"
+
+# API çağrısı
+curl https://your-api.com/mcp/messages \
+  -H "X-API-Key: your_secure_key_here"
+```
+
+✅ **Rate Limiting** (Varsayılan: 30 req/min)
+```bash
+export RATE_LIMIT="60/minute"
+```
+
+✅ **CORS Kısıtlaması**
+```bash
+export ALLOWED_ORIGINS="https://yourdomain.com,https://app.yourdomain.com"
+```
+
+✅ **SSL/TLS Güvenliği** - Global SSL bypass kaldırıldı
+
+✅ **Error Handling** - Bilgi sızıntısı önlendi
+
+✅ **Documentation Control**
+```bash
+export ENABLE_DOCS=false  # Production için
+```
+
+### Güvenlik Skoru
+
+- **Öncesi:** 🔴 4.2/10 (Düşük)
+- **Sonrası:** 🟢 8.5/10 (İyi)
+
+### Environment Variables
+
+`.env.example` dosyasını kopyalayın ve düzenleyin:
+```bash
+cp .env.example .env
+# Secure API key oluştur
+openssl rand -hex 32
+# .env dosyasını düzenle
+```
+
+**Detaylı Güvenlik Kılavuzu:** [SECURITY.md](./SECURITY.md)
+
+---
+
+## 🌐 FastAPI HTTP Endpoint
+
+Borsa MCP aynı zamanda n8n, webhook ve web entegrasyonları için HTTP/SSE endpoint'leri sunar:
+
+### API Endpoint'leri
+
+- `GET /` - API bilgisi ve status
+- `GET /health` - Health check (auth gerektirmez)
+- `GET /mcp` - SSE endpoint (MCP heartbeat)
+- `POST /mcp/messages` - MCP tool execution (JSON-RPC 2.0)
+- `GET /mcp/tools` - Tool documentation
+- `POST /analyze/technical/{ticker}` - Technical analysis
+- `POST /maestro/analyze` - Market Maestro analysis
+- `GET /market/overview` - BIST 100 overview
+
+### n8n Entegrasyonu
+
+```javascript
+// n8n HTTP Request node
+{
+  "url": "https://your-api.com/mcp/messages",
+  "method": "POST",
+  "headers": {
+    "X-API-Key": "your_api_key",
+    "Content-Type": "application/json"
+  },
+  "body": {
+    "method": "tools/list"
+  }
+}
+```
+
+### Swagger UI
+
+```
+https://your-api.com/docs
+```
+(ENABLE_DOCS=true gerektirir)
 
 </details>
 
@@ -462,6 +657,38 @@ Kira sözleşmelerinin enflasyon ayarlaması için gerekli artış oranını hes
 
 ---
 
+## 📞 Destek & Katkıda Bulunma
+
+### Dokümantasyon
+- **[README.md](./README.md)** - Ana dokümantasyon
+- **[QUICK_START.md](./QUICK_START.md)** - Hızlı başlangıç kılavuzu
+- **[DEPLOYMENT_SECURITY_REPORT.md](./DEPLOYMENT_SECURITY_REPORT.md)** - Deployment ve güvenlik analizi
+- **[SECURITY.md](./SECURITY.md)** - Güvenlik konfigürasyonu
+
+### Topluluk
+- **GitHub Issues**: Hata bildirimi ve özellik istekleri
+- **Pull Requests**: Katkılarınızı bekliyoruz!
+- **Discussions**: Sorular ve tartışmalar için
+
+### Versiyonlar
+
+**v2.1.0 (2025-11-11)**
+- 🔒 Kapsamlı güvenlik iyileştirmeleri
+- 🚀 Production deployment desteği
+- 🌐 FastAPI HTTP/SSE endpoint'leri
+- 📚 Genişletilmiş dokümantasyon
+
+**v2.0.0**
+- 43 MCP tool ile tam özellik seti
+- BIST, TEFAS, BtcTurk, Coinbase desteği
+- Döviz, emtia ve ekonomik takvim
+
+---
+
 📜 **Lisans**
 
 Bu proje MIT Lisansı altında lisanslanmıştır. Detaylar için `LICENSE` dosyasına bakınız.
+
+---
+
+**🌟 Projeyi beğendiyseniz yıldız vermeyi unutmayın!**
