@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  borsa-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: borsa-mcp-api
+    ports:
+      - "9000:9000"
+    environment:
+      - PORT=9000
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - borsa-network
+
+  # Optional: Redis for caching
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: borsa-redis
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis-data:/data
+  #   restart: unless-stopped
+  #   networks:
+  #     - borsa-network
+
+  # Optional: Nginx reverse proxy
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: borsa-nginx
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - ./ssl:/etc/nginx/ssl:ro
+  #   depends_on:
+  #     - borsa-mcp
+  #   restart: unless-stopped
+  #   networks:
+  #     - borsa-network
+
+networks:
+  borsa-network:
+    driver: bridge
+
+# volumes:
+#   redis-data:
