@@ -13,14 +13,11 @@ from datetime import datetime
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
-# Disable SSL verification globally to avoid certificate issues
-ssl._create_default_https_context = ssl._create_unverified_context
+# Security Note: SSL verification is now handled at the provider level
+# If you encounter SSL certificate issues, configure SSL settings in individual providers
+# instead of disabling it globally. For development/testing only, you can set:
+# os.environ['PYTHONHTTPSVERIFY'] = '0'  # NOT RECOMMENDED FOR PRODUCTION
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# Set yfinance to skip SSL verification
-os.environ['PYTHONHTTPSVERIFY'] = '0'
-os.environ['CURL_CAINFO'] = ''
-os.environ['REQUESTS_CA_BUNDLE'] = ''
 
 from borsa_client import BorsaApiClient
 from models import (

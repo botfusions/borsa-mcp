@@ -4,39 +4,80 @@
 Complete MCP Server implementation for n8n integration
 """
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Security, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import APIKeyHeader
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel
 from typing import Dict, List, Optional, Any, AsyncGenerator
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import asyncio
 import logging
 import json
+import os
 from datetime import datetime
 import yfinance as yf
 import pandas as pd
 import numpy as np
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO")),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
+
+# Security Configuration
+ENABLE_DOCS = os.getenv("ENABLE_DOCS", "false").lower() == "true"
+API_KEY = os.getenv("BORSA_API_KEY")
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+RATE_LIMIT = os.getenv("RATE_LIMIT", "30/minute")
+
+# API Key Security
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+async def verify_api_key(api_key: str = Security(api_key_header)) -> bool:
+    """Verify API key if authentication is enabled"""
+    if not API_KEY:
+        return True  # No authentication required if API_KEY not set
+    if not api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="API Key required. Please provide X-API-Key header."
+        )
+    if api_key != API_KEY:
+        logger.warning(f"Invalid API key attempt from client")
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid API Key"
+        )
+    return True
+
+# Rate Limiting
+limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT])
 
 # FastAPI app initialization
 app = FastAPI(
     title="🎭 BORSA MCP - Market Virtuoso API",
     description="AI-powered Turkish stock market analysis with MCP Server integration",
     version="2.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url="/docs" if ENABLE_DOCS else None,
+    redoc_url="/redoc" if ENABLE_DOCS else None
 )
 
-# CORS middleware
+# Add rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS middleware with environment-based configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -81,13 +122,19 @@ async def add_mcp_cors_headers(request: Request, call_next):
     return response
 
 @app.get("/")
-async def root():
+@limiter.limit(RATE_LIMIT)
+async def root(request: Request):
     """Welcome message with MCP Server info"""
     return {
         "message": "🎭 Market Virtuoso API - MCP Server Ready!",
         "status": "operational",
         "persona": "Market Maestro",
         "version": "2.1.0",
+        "security": {
+            "authentication": "enabled" if API_KEY else "disabled",
+            "rate_limiting": RATE_LIMIT,
+            "cors": "restricted" if ALLOWED_ORIGINS != ["*"] else "open"
+        },
         "mcp_server": {
             "sse_endpoint": "/mcp",
             "messages_endpoint": "/mcp/messages",
@@ -110,7 +157,7 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint - No rate limit, no auth"""
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
@@ -123,7 +170,7 @@ async def health_check():
         },
         "mcp_tools": {
             "borsa_technical_analysis": "✅ Ready",
-            "maestro_full_analysis": "✅ Ready", 
+            "maestro_full_analysis": "✅ Ready",
             "market_sentiment_analysis": "✅ Ready",
             "market_overview": "✅ Ready"
         }
@@ -155,10 +202,12 @@ async def mcp_sse_endpoint(request: Request):
     
     return EventSourceResponse(event_stream())
 
-@app.post("/mcp/messages")
+@app.post("/mcp/messages", dependencies=[Depends(verify_api_key)])
+@limiter.limit(RATE_LIMIT)
 async def mcp_messages_endpoint(request: Request):
     """
     🔧 MCP Messages Endpoint - Tool execution handler
+    Protected by API Key and Rate Limiting
     """
     try:
         message = await request.json()
@@ -440,16 +489,23 @@ async def market_overview():
         return {"error": f"Market overview failed: {str(e)}"}
 
 # Legacy endpoints
-@app.post("/analyze/technical/{ticker}")
-async def analyze_technical_endpoint(ticker: str, request: AnalysisRequest = AnalysisRequest()):
-    return await analyze_technical(ticker, request)
+@app.post("/analyze/technical/{ticker}", dependencies=[Depends(verify_api_key)])
+@limiter.limit(RATE_LIMIT)
+async def analyze_technical_endpoint(
+    ticker: str,
+    request_obj: Request,
+    analysis_request: AnalysisRequest = AnalysisRequest()
+):
+    return await analyze_technical(ticker, analysis_request)
 
-@app.post("/maestro/analyze") 
-async def maestro_analyze_endpoint(request: MaestroRequest):
-    return await maestro_analyze(request)
+@app.post("/maestro/analyze", dependencies=[Depends(verify_api_key)])
+@limiter.limit(RATE_LIMIT)
+async def maestro_analyze_endpoint(request_obj: Request, maestro_request: MaestroRequest):
+    return await maestro_analyze(maestro_request)
 
 @app.get("/mcp/tools")
-async def mcp_tools_list():
+@limiter.limit(RATE_LIMIT)
+async def mcp_tools_list(request: Request):
     """MCP Tools documentation"""
     return {
         "mcp_server": "BORSA Market Virtuoso",
@@ -467,11 +523,35 @@ async def mcp_tools_list():
 # Error handlers
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc: HTTPException):
+    logger.warning(f"404 error: {request.url.path}")
     return JSONResponse(
         status_code=404,
         content={
-            "error": "Endpoint bulunamadı",
+            "error": "Endpoint not found",
+            "path": str(request.url.path),
             "available_endpoints": ["/", "/health", "/mcp", "/mcp/messages", "/mcp/tools"]
+        }
+    )
+
+@app.exception_handler(500)
+async def internal_error_handler(request: Request, exc: Exception):
+    logger.error(f"Internal server error: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal server error",
+            "message": "An unexpected error occurred. Please try again later."
+        }
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Server error",
+            "message": "An error occurred processing your request"
         }
     )
 
